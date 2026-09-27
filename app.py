@@ -108,7 +108,7 @@ def main() -> None:
     if user["role"] == "kam":
         render_kam_app(user, state)
     elif user["role"] in ("mentor", "manager", "hr"):
-        render_dashboard(state)
+        render_dashboard(state, allow_add_hire=user["role"] == "hr")
     else:
         st.error("Unknown role.")
 

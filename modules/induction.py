@@ -2,14 +2,19 @@
 Day-15 assessment, and the Days 11-14 account-brief form."""
 from __future__ import annotations
 
+import re
+
 import streamlit as st
 
 from modules.assessment import score_assessment, score_daily_check
 from modules.data_store import INDUCTION_PLAN, load_kb_file, plan_for_day, questions_for_day, day15_questions
 from modules.progress_store import (
     day_is_complete, day_is_unlocked, mark_content_read, mark_session_attended,
-    record_check_result, record_day15_result, save_account_brief,
+    record_check_result, record_day15_result, save_account_brief, set_checklist_item,
 )
+
+DAY_CHECKLIST_HEADING = re.compile(r"^##\s+((?:Day\s+\d+|Days\s+\d+\s*[-–]\s*\d+)\s+checklist)\s*$", re.I)
+TASK_CHECKBOX = re.compile(r"^\s*-\s+\[[ xX]\]\s+(.+?)\s*$")
 
 
 def render_kam_home(state: dict, username: str) -> None:
@@ -63,6 +68,44 @@ def render_journey_tracker(state: dict, username: str) -> None:
     st.write("🔒 **Days 16-30 — Phase 2** (guided pricing exposure, negotiation practice, certification)")
 
 
+def split_day_checklist(content: str) -> tuple[str, str | None, list[str]]:
+    body = []
+    items = []
+    title = None
+    in_checklist = False
+
+    for line in content.splitlines():
+        if title is None:
+            heading = DAY_CHECKLIST_HEADING.match(line)
+            if heading:
+                title = heading.group(1)
+                in_checklist = True
+                continue
+
+        if in_checklist:
+            checkbox = TASK_CHECKBOX.match(line)
+            if checkbox:
+                items.append(checkbox.group(1))
+                continue
+            if line.startswith("#"):
+                in_checklist = False
+            elif not line.strip():
+                continue
+
+        body.append(line)
+
+    return "\n".join(body).strip(), title, items
+
+
+def _linked_checklist_type(item: str) -> str | None:
+    normalized = item.casefold()
+    if "session" in normalized and ("attended" in normalized or "completed" in normalized):
+        return "session"
+    if "knowledge check" in normalized:
+        return "knowledge_check"
+    return None
+
+
 def render_day_module(state: dict, username: str, day: int) -> None:
     kam = state["kams"][username]
     plan = plan_for_day(day)
@@ -77,8 +120,46 @@ def render_day_module(state: dict, username: str, day: int) -> None:
 
     with tab_content:
         content = load_kb_file(plan["file"]) if plan["file"] else ""
+        content, checklist_title, checklist_items = split_day_checklist(content)
         st.markdown(content)
         day_state = kam["days"][str(day)]
+
+        if checklist_title and checklist_items:
+            st.markdown(f"### {checklist_title}")
+            saved_items = day_state.get("checklist", {})
+            for index, item in enumerate(checklist_items):
+                linked_type = _linked_checklist_type(item)
+                if linked_type == "session":
+                    checked = bool(day_state.get("session_attended"))
+                    current_value = st.checkbox(
+                        item,
+                        value=checked,
+                        key=f"checklist_session_{username}_{day}_{index}",
+                    )
+                    if current_value != checked:
+                        mark_session_attended(state, username, day, current_value)
+                    continue
+
+                if linked_type == "knowledge_check":
+                    checked = bool(day_state.get("check_passed"))
+                    st.checkbox(
+                        item,
+                        value=checked,
+                        key=f"checklist_status_{username}_{day}_{index}",
+                        disabled=True,
+                        help="Pass the knowledge check to complete this item.",
+                    )
+                    continue
+
+                checked = bool(saved_items.get(item, False))
+                current_value = st.checkbox(
+                    item,
+                    value=checked,
+                    key=f"checklist_{username}_{day}_{index}",
+                )
+                if current_value != checked:
+                    set_checklist_item(state, username, day, item, current_value)
+
         if not day_state["content_read"]:
             if st.button("Mark content as read", key=f"read_{day}"):
                 mark_content_read(state, username, day)

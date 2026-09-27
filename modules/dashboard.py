@@ -4,12 +4,26 @@ from __future__ import annotations
 import streamlit as st
 
 from modules.data_store import INDUCTION_PLAN
-from modules.progress_store import day_is_complete
+from modules.progress_store import add_new_hire, day_is_complete
 
 
-def render_dashboard(state: dict) -> None:
+def render_dashboard(state: dict, allow_add_hire: bool = False) -> None:
     st.markdown("## Induction Dashboard")
     st.caption("Visible to Mentor, Reporting Boss (KAM Head) and HR")
+
+    if allow_add_hire:
+        st.subheader("Add a new hire")
+        with st.form("add_new_hire_form"):
+            name = st.text_input("Full name", key="new_hire_name")
+            submitted = st.form_submit_button("Add KAM", type="primary")
+
+        if submitted:
+            try:
+                username = add_new_hire(state, name)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.success(f"Added {name.strip()} as a Day 1 KAM. Login ID: {username}")
 
     for username, kam in state["kams"].items():
         with st.container(border=True):

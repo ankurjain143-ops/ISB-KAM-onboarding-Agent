@@ -13,6 +13,7 @@ would use a proper database (Postgres, etc.) behind the same interface.
 from __future__ import annotations
 
 import json
+import re
 import threading
 from pathlib import Path
 
@@ -27,21 +28,26 @@ def _default_state() -> dict:
     for username, u in DEMO_USERS.items():
         if u["role"] != "kam":
             continue
-        state["kams"][username] = {
-            "name": u["name"],
-            "current_day": u["day"],
-            "days": {
-                str(d["day"]): {"content_read": d["day"] < u["day"],
-                                 "session_attended": d["day"] < u["day"],
-                                 "check_passed": d["day"] < u["day"],
-                                 "check_score": None}
-                for d in INDUCTION_PLAN
-            },
-            "account_brief": "",
-            "day15_result": None,
-        }
+        state["kams"][username] = _new_kam_progress(u["name"], u["day"])
         # Arjun (Day 15 demo user) has completed Days 1-14 and is ready for assessment
     return state
+
+
+def _new_kam_progress(name: str, current_day: int) -> dict:
+    return {
+        "name": name,
+        "current_day": current_day,
+        "days": {
+            str(d["day"]): {"content_read": d["day"] < current_day,
+                             "session_attended": d["day"] < current_day,
+                             "check_passed": d["day"] < current_day,
+                             "check_score": None,
+                             "checklist": {}}
+            for d in INDUCTION_PLAN
+        },
+        "account_brief": "",
+        "day15_result": None,
+    }
 
 
 def load() -> dict:
@@ -64,6 +70,23 @@ def save(state: dict) -> None:
         PROGRESS_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
+def add_new_hire(state: dict, name: str) -> str:
+    name = name.strip()
+    if not name:
+        raise ValueError("Enter the new hire's name.")
+
+    base_username = re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-") or "new-hire"
+    username = base_username
+    suffix = 2
+    while username in DEMO_USERS or username in state["kams"]:
+        username = f"{base_username}-{suffix}"
+        suffix += 1
+
+    state["kams"][username] = _new_kam_progress(name, 1)
+    save(state)
+    return username
+
+
 def get_kam(state: dict, username: str) -> dict:
     return state["kams"][username]
 
@@ -73,8 +96,14 @@ def mark_content_read(state: dict, username: str, day: int) -> None:
     save(state)
 
 
-def mark_session_attended(state: dict, username: str, day: int) -> None:
-    state["kams"][username]["days"][str(day)]["session_attended"] = True
+def mark_session_attended(state: dict, username: str, day: int, attended: bool = True) -> None:
+    state["kams"][username]["days"][str(day)]["session_attended"] = attended
+    save(state)
+
+
+def set_checklist_item(state: dict, username: str, day: int, item: str, checked: bool) -> None:
+    day_state = state["kams"][username]["days"][str(day)]
+    day_state.setdefault("checklist", {})[item] = checked
     save(state)
 
 
